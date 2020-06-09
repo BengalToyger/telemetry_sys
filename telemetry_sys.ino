@@ -14,7 +14,7 @@
 #define RFM69_CS      7
 #define RFM69_INT     2
 #define RFM69_RST     4
-#define LED           31
+#define LED           13
 
 #define IMU_CS        49
 
@@ -37,13 +37,35 @@ RHReliableDatagram rf69_manager(rf69, MY_ADDRESS);
 
 MPU9250 IMU(SPI,IMU_CS);
 
+struct Data_Packet {
+        float latitude_degrees;
+        float longitude_degrees;
+        int16_t mag_x_u_T;
+        int16_t mag_y_u_T;
+        int16_t mag_z_u_T;
+};
 
+struct Data_Packet data_packet;
+
+uint8_t data_packet_len = sizeof(Data_Packet);
+
+struct Cmd_Packet {
+        uint8_t opcode;
+        uint8_t ps_1;
+        uint8_t ps_2;
+        uint8_t ps_3;
+        uint8_t ps_4;
+};
+
+struct Cmd_Packet cmd_packet;
+
+uint8_t cmd_packet_len = sizeof(Cmd_Packet);
 
 int status;
-char buf[RH_RF69_MAX_MESSAGE_LEN];
 uint16_t packetnum = 0;  // packet counter, we increment per xmission
+uint16_t ms_timer = 0;
 uint8_t sent = 0;
-uint8_t len = 0;
+uint8_t len = sizeof(Data_Packet);
 
 void setup() {
 	// serial to display data
@@ -57,36 +79,43 @@ void setup() {
 	gps_init();
 	radio_init();
 	imu_init();
-
+	//setup_1ms_timer_int();
 }
 
 
-ISR(TIMER1_COMPB_vect) {
-	char c = GPS.read();
+ISR(TIMER4_COMPA_vect) {
+	//ms_timer++;
 }
 
 
-void loop() {
+void loop() {	
 	char c = GPS.read();
 	if (GPS.newNMEAreceived()) {
 		GPS.parse(GPS.lastNMEA());
 	}
-	IMU.readSensor();
-	send_data();
+	if (!(millis() % 1000) & !sent) {
+		IMU.readSensor();
+		send_data();
+		sent = 1;
+	} else if ((millis() % 1000)) {
+		sent = 0;
+	}
+	if (rf69_manager.available()){
+		receive_cmd();
+	}
 }
 
 void setup_1ms_timer_int(){
 	noInterrupts();           // disable all interrupts
-	TCCR1A |= 0;
-	TCCR1B |= (1 << WGM12)|(1 << CS10);
+	TCCR4A |= 0;
+	TCCR4B |= (1 << WGM12)|(1 << CS10);
 
-	OCR1A = MS_CNT;            
-	TIMSK1 |= (1 << OCIE1A);   // enable timer compare match interrupt
+	OCR4A = MS_CNT;            
+	TIMSK4 |= (1 << OCIE4A);   // enable timer compare match interrupt
 	interrupts();             // enable all interrupts
 }
 
 void radio_init(){
-	pinMode(LED, OUTPUT);     
  	pinMode(RFM69_RST, OUTPUT);
  	digitalWrite(RFM69_RST, LOW);
 	digitalWrite(RFM69_RST, HIGH);
@@ -127,7 +156,6 @@ void gps_init(){
 	// Ask for antenna data
 	GPS.sendCommand(PGCMD_ANTENNA);
 
-//	setup_1ms_timer_int();
 }
 
 void imu_init(){
@@ -143,16 +171,43 @@ void imu_init(){
 }
 
 void send_data(){
-	if (!(millis() % 1000) & !sent){
-		sent = 1;
-		Serial.println(GPS.latitudeDegrees, 4);
-		Serial.println(GPS.longitudeDegrees, 4);
-		len = sprintf(buf,"%f.4,%f.4,%d,%d,%d",
-		GPS.latitudeDegrees,GPS.longitudeDegrees,
-		(int16_t)IMU.getMagX_uT(),(int16_t)IMU.getMagY_uT(),
-		(int16_t)IMU.getMagZ_uT());
-		rf69_manager.sendtoWait((uint8_t*)buf,len,DEST_ADDRESS);		
-	} else if (sent & (millis() % 1000)) {
-		sent = 0;
+	ms_timer = 0;
+	format_data();
+	Serial.println(data_packet.latitude_degrees, 4);
+	Serial.println(data_packet.longitude_degrees, 4);
+	rf69_manager.sendto((uint8_t*)&data_packet,
+	data_packet_len,DEST_ADDRESS);
+}
+
+void format_data(){
+	data_packet.latitude_degrees = (float)GPS.latitudeDegrees;
+	data_packet.longitude_degrees = (float)GPS.longitudeDegrees;
+	data_packet.mag_y_u_T = (int16_t)IMU.getMagX_uT();
+	data_packet.mag_x_u_T = (int16_t)IMU.getMagY_uT(); //X and Y are swapped
+	data_packet.mag_z_u_T = (int16_t)IMU.getMagZ_uT();
+}
+
+void receive_cmd(){
+	uint8_t from;
+	if (rf69_manager.recvfrom((uint8_t*)&cmd_packet,
+		&cmd_packet_len, &from)){
+		execute_opcode();	
+	} 
+}
+
+void execute_opcode(){
+	if (cmd_packet.opcode == 1) {
+		toggle_led();
+	} else if (cmd_packet.opcode == 2) {
+		set_phase_shifters();
 	}
+}
+
+void toggle_led(){
+	DDRB |= (1 << PB7);
+	PORTB ^= (1 << PB7);
+}
+
+void set_phase_shifters(){
+
 }
