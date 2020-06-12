@@ -61,6 +61,13 @@ struct Cmd_Packet cmd_packet;
 
 uint8_t cmd_packet_len = sizeof(Cmd_Packet);
 
+const uint8_t rclk = 30;
+const uint8_t srclk = 31;
+const uint8_t ps_1_ser = 32;
+const uint8_t ps_2_ser = 32;
+const uint8_t ps_3_ser = 32;
+const uint8_t ps_4_ser = 32;
+
 int status;
 uint16_t packetnum = 0;  // packet counter, we increment per xmission
 uint16_t ms_timer = 0;
@@ -191,6 +198,7 @@ void receive_cmd(){
 	uint8_t from;
 	if (rf69_manager.recvfrom((uint8_t*)&cmd_packet,
 		&cmd_packet_len, &from)){
+		packetnum++;
 		execute_opcode();	
 	} 
 }
@@ -198,8 +206,15 @@ void receive_cmd(){
 void execute_opcode(){
 	if (cmd_packet.opcode == 1) {
 		toggle_led();
+		set_phase_shifters(rclk,srclk,
+			ps_1_ser,ps_2_ser,ps_3_ser,ps_4_ser,
+			(uint8_t)packetnum,(uint8_t)packetnum,
+			(uint8_t)packetnum,(uint8_t)packetnum);
 	} else if (cmd_packet.opcode == 2) {
-		set_phase_shifters();
+		set_phase_shifters(rclk,srclk,
+			ps_1_ser,ps_2_ser,ps_3_ser,ps_4_ser,
+			cmd_packet.ps_1,cmd_packet.ps_2,
+			cmd_packet.ps_3,cmd_packet.ps_4);
 	}
 }
 
@@ -208,6 +223,24 @@ void toggle_led(){
 	PORTB ^= (1 << PB7);
 }
 
-void set_phase_shifters(){
-
+void set_phase_shifters(uint8_t rclk, uint8_t srclk, 
+	uint8_t ps_1_ser, uint8_t ps_2_ser, uint8_t ps_3_ser, uint8_t ps_4_ser, 
+	uint8_t ps_1_val, uint8_t ps_2_val, uint8_t ps_3_val, uint8_t ps_4_val){
+	pinMode(ps_1_ser, OUTPUT);
+	pinMode(ps_2_ser, OUTPUT);
+	pinMode(ps_3_ser, OUTPUT);
+	pinMode(ps_4_ser, OUTPUT);
+	pinMode(srclk, OUTPUT);
+	pinMode(rclk, OUTPUT);
+	digitalWrite(rclk, LOW);
+	for (int i = 0; i < 8; i++) {
+		digitalWrite(ps_1_ser, ps_1_val & (1<<i));
+		digitalWrite(ps_2_ser, ps_2_val & (1<<i));
+		digitalWrite(ps_3_ser, ps_3_val & (1<<i));
+		digitalWrite(ps_4_ser, ps_4_val & (1<<i));
+		digitalWrite(srclk, LOW);
+		digitalWrite(srclk, HIGH);
+	}
+	digitalWrite(rclk, HIGH);
+	digitalWrite(rclk, LOW);
 }
